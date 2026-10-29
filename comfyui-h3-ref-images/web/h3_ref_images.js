@@ -93,17 +93,32 @@ function removeSubject(n) {
   setPrompt(w, text);
 }
 
-// Re-wire the remaining images to consecutive slots after one is deleted.
+// Re-wire the remaining images to consecutive slots after one is deleted,
+// unless the H3 node already closed the gap itself.
 function compact(node) {
   const images = connectedImages(node);
-  for (let k = 0; k < MAX_IMAGES; k++) {
-    const slot = slotIndex(node, k);
-    if (slot >= 0 && node.inputs[slot].link != null) node.disconnectInput(slot);
+  const gapless = images.every((img, k) => sourceOf(node, k) === img);
+  if (!gapless) {
+    for (let k = 0; k < MAX_IMAGES; k++) {
+      const slot = slotIndex(node, k);
+      if (slot >= 0 && node.inputs[slot].link != null) node.disconnectInput(slot);
+    }
+    images.forEach((img, k) => {
+      const slot = slotIndex(node, k);
+      if (slot >= 0) img.connect(0, node, slot);
+    });
   }
-  images.forEach((img, k) => {
-    const slot = slotIndex(node, k);
-    if (slot >= 0) img.connect(0, node, slot);
+  recordPositions(node);
+}
+
+// Each image box remembers which picture it is. The link is already gone by
+// the time a deleted box hears about it, so this is how it knows.
+function recordPositions(node) {
+  connectedImages(node).forEach((img, k) => {
+    img.__h3Picture = k + 1;
+    if (img.properties?.[ADDED_FLAG]) img.title = `Reference image ${k + 1}`;
   });
+  app.graph.setDirtyCanvas(true, true);
 }
 
 function watchRemoval(imageNode) {
@@ -111,14 +126,13 @@ function watchRemoval(imageNode) {
   imageNode.__h3Watched = true;
   const prior = imageNode.onRemoved;
   imageNode.onRemoved = function () {
-    const node = h3Node();
-    // Which picture this was, read before the graph drops the link.
-    const pos = node ? connectedImages(node).indexOf(this) : -1;
     prior?.apply(this, arguments);
-    if (!node || pos < 1) return;
+    const node = h3Node();
+    const picture = this.__h3Picture;
+    if (!node || !picture || picture < 2) return;
     setTimeout(() => {
       compact(node);
-      removeSubject(pos + 1);
+      removeSubject(picture);
     }, 0);
   };
 }
@@ -146,6 +160,7 @@ function addReferenceImage(anchor) {
   }
   img.connect(0, node, slot);
   watchRemoval(img);
+  recordPositions(node);
   addSubjectLine(count + 1);
 }
 
@@ -158,6 +173,7 @@ function decorate() {
     anchor.setSize(anchor.computeSize());
   }
   for (const img of connectedImages(node).slice(1)) watchRemoval(img);
+  recordPositions(node);
 }
 
 app.registerExtension({
